@@ -14,6 +14,9 @@ class Action(Enum):
     register = 'register'
     subscribe = 'subscribe'
     refresh = 'refresh'
+    connect_to_labyrinth = 'connect_to_labyrinth'
+    get_labyrinth = 'get_labyrinth'
+    deliver_labyrinth = 'deliver_labyrinth'
 
     @classmethod
     def to_json(cls):
@@ -23,6 +26,8 @@ labyrinths = {}
 connections = {}
 
 async def refresh():
+    logger.info('Refreshing connections.')
+
     for connection in connections.values():
         await connection.send(json.dumps({
             'action': Action.refresh.value,
@@ -32,19 +37,54 @@ async def refresh():
             }
         }))
 
+async def handle_deliver_labyrinth(websocket, websocket_id, path, payload):
+    labyrinth_destination_id = payload['for']
+    labyrinth = payload['labyrinth']
+
+    logger.info('Delivering labyrinth {} to websocket {}.'.format(websocket_id, labyrinth_destination_id))
+
+    if labyrinth_destination_id in connections:
+        labyrinth_destination = connections[labyrinth_destination_id]
+
+        await labyrinth_destination.send(json.dumps({
+            'action': Action.deliver_labyrinth.value,
+            'payload': {
+                'labyrinth': labyrinth
+            }
+        }))
+
+async def handle_connect_to_labyrinth(websocket, websocket_id, path, payload):
+    labyrinth_id = payload['labyrinth_id']
+
+    logger.info('Connecting websocket {} to labyrinth {}.'.format(websocket_id, labyrinth_id))
+
+    if labyrinth_id in connections:
+        labyrinth_owner = connections[labyrinth_id]
+
+        await labyrinth_owner.send(json.dumps({
+            'action': Action.get_labyrinth.value,
+            'payload': {
+                'for': websocket_id
+            }
+        }))
 
 async def handle_register(websocket, websocket_id, path, payload):
+    logger.info('Registering labyrinth {}.'.format(websocket_id))
     labyrinths[websocket_id] = payload
 
     await websocket.send(json.dumps({
         'action': Action.register.value,
-        'payload': True
+        'payload': {
+            'success': True
+        }
     }))
 
     await refresh()
 
 message_handler = {
-    Action.register.value: handle_register
+    Action.register.value: handle_register,
+    Action.connect_to_labyrinth.value: handle_connect_to_labyrinth,
+    Action.deliver_labyrinth.value: handle_deliver_labyrinth,
 }
 
 async def hello(websocket, path):
@@ -84,7 +124,7 @@ async def hello(websocket, path):
             break
 
 
-start_server = websockets.serve(hello, 'localhost', 8765)
+start_server = websockets.serve(hello, '0.0.0.0', 8765)
 
 asyncio.get_event_loop().run_until_complete(start_server)
 asyncio.get_event_loop().run_forever()
